@@ -8,6 +8,8 @@ Created on Tue May 12 21:32:46 2020
 import GetOldTweets3 as got
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 import datetime
 from nltk.corpus import stopwords
 from sklearn.feature_extraction.text import CountVectorizer
@@ -25,6 +27,27 @@ def rename_date_field(df):
         df.rename(columns = {dfColumns[checkDateField]: 'Date'}, inplace = True)
     return df
 
+def plot_case_data(caseData, plotCounts, plotHosp, plotDeaths):
+    dates = pd.to_datetime(caseData['Date'])
+    ax = plt.gca()
+    formatter = mdates.DateFormatter("%m-%d")
+    ax.xaxis.set_major_formatter(formatter)
+    locator = mdates.DayLocator(bymonthday = [1, 15])
+    ax.xaxis.set_major_locator(locator)
+    if plotCounts:
+        plt.plot_date(dates, caseData['Cases'].values, '-', label = 'Cases')
+    if plotHosp:
+        plt.plot_date(dates, caseData['Hospitalizations'].values, '-', label = 'Hosp')
+    if plotDeaths:
+        plt.plot(dates, caseData['Deaths'].values, '-', label = 'Deaths')
+    plt.xlabel('Date')
+    plt.ylabel('New Occurrences')
+    plt.title('COVID Statistics')
+    plt.legend()
+    plt.xticks(rotation = 70)
+    plt.show()
+       
+
 def get_tweets(geoLocation, distance, sinceDate, untilDate, querySearch, maxTweets = 0):
     tweetCriteria = got.manager.TweetCriteria().setNear(geoLocation)\
         .setWithin(distance).setSince(sinceDate).setUntil(untilDate)\
@@ -39,11 +62,13 @@ def get_tweets(geoLocation, distance, sinceDate, untilDate, querySearch, maxTwee
 def correlate_tweets(tweetsDF, caseData, caseWeight, hospWeight, deathWeight):
     tweetDates = [str(dt.date()) for dt in pd.to_datetime(tweetsDF['Date'])]
     caseDates = [str(dt.date() for dt in pd.to_datetime(caseData['Date']))]
-    caseCounts = caseData['Counts'].values
+    caseCounts = caseData['Cases'].values
     hospCounts = caseData['Hospitalizations'].values
     deathCounts = caseData['Deaths'].values
     totalImpact = (caseWeight*caseCounts) + (hospWeight*hospCounts)\
         + (deathWeight*deathCounts)
+        
+
     
 
 #%%
@@ -59,6 +84,13 @@ if __name__ == "__main__":
         tweetsDF = pd.read_csv('./CSV_Files/NYC_Tweets.csv')
     except:
         print("Wrong directory or tweets have not been pulled")
+        
+    #%% Print statistics
+    
+    plotCounts = True
+    plotHosp = True
+    plotDeaths = True
+    plot_case_data(caseData, plotCounts, plotHosp, plotDeaths)
         
     
     #%% Gather tweets
