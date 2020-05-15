@@ -11,9 +11,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from nltk.corpus import stopwords
-from sklearn.feature_extraction.text import CouplntVectorizer
+from sklearn.model_selection import train_test_split
+from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.feature_extraction.text import TfidfTransformer
 from sklearn.naive_bayes import MultinomialNB
+from operator import itemgetter
+import warnings
+
+warnings.filterwarnings("ignore")
 
 #%%
 
@@ -49,18 +54,15 @@ def plot_count_and_delta(dates, data, label, doShow = True, figNum = False):
         plt.show()
     return plt.gcf().number
 
-def plot_case_data(caseData, totalImpact = []):
+def plot_case_data(caseData, showPlots = True):
     dates = pd.to_datetime(caseData['Date'])
     cases = caseData['Cases'].values
     hosp = caseData['Hospitalizations'].values
     deaths = caseData['Deaths'].values
     figNum = plot_count_and_delta(dates, cases, 'Cases', doShow = False)
     plot_count_and_delta(dates, hosp, 'Hosps', doShow = False, figNum = figNum)
-    if not list(totalImpact):
-        plot_count_and_delta(dates, deaths, 'Deaths', figNum = figNum)
-    else:
-        plot_count_and_delta(dates, deaths, 'Deaths', doShow = False, figNum = figNum)
-        plot_count_and_delta(dates, totalImpact, 'Total Impact', figNum = figNum)
+    plot_count_and_delta(dates, deaths, 'Deaths', doShow = showPlots, figNum = figNum)
+    return figNum
 
 def rename_date_field(df):
     dfColumns = df.columns
@@ -112,7 +114,6 @@ def compute_total_impact(caseData, caseWeight, hospWeight, deathWeight):
         + (deathWeight*deathCounts)) / (caseWeight + hospWeight + deathWeight)
     # totalImpact = (caseWeight*caseCounts) + (hospWeight*hospCounts)\
     #     + (deathWeight*deathCounts)
-    plot_case_data(caseData, totalImpact)
     return totalImpact
 
 def correlate_tweets(tweetsDF, caseData, totalImpact):
@@ -138,6 +139,73 @@ def correlate_tweets(tweetsDF, caseData, totalImpact):
     print("Tweet increase percentage: %0.2f" % (tweetIncreasePer*100))
     return tweetResults
 
+def count_tweets_by_day(tweetsDF, tweetResults):
+    tweetDates = [str(dt.date()) for dt in pd.to_datetime(tweetsDF['Date'])]
+    uniqueDates = list(set(tweetDates))
+    uniqueDates.sort()
+    numTweetsByDay = [len(find_idx(tweetDates, date)) for date in uniqueDates]
+    return uniqueDates, numTweetsByDay
+
+def transform_text(text, count_vect, tfTransformer):
+    count_text = count_vect.transform(text)
+    tf_text = tfTransformer.transform(count_text)
+    return tf_text
+
+def create_classifier(totalTweets, totalResults, trainSize, stopwordsList, useIDF):
+    tweetTxtTrain, tweetTxtTest, resultsTrain, resultsTest = train_test_split(
+        totalTweets, totalResults, train_size = trainSize, random_state = 42)
+    count_vect = CountVectorizer(stop_words = stopwordsList)
+    train_counts = count_vect.fit_transform(tweetTxtTrain)
+    tfTransformer = TfidfTransformer(use_idf = useIDF)
+    train_tf = tfTransformer.fit_transform(train_counts)
+    clf = MultinomialNB().fit(train_tf, resultsTrain)
+    test_tf = transform_text(tweetTxtTest, count_vect, tfTransformer)
+    print("Accuracy: %0.2f" % (clf.score(test_tf, resultsTest)*100))
+    return clf, count_vect, tfTransformer
+
+def show_most_informative(clf, count_vect, n = 10):
+    classes = clf.classes_
+    features = count_vect.get_feature_names()
+    probabilities = np.exp(clf.feature_log_prob_)
+    one2two_ratio = np.round(np.divide(probabilities[0], probabilities[1]), 3)
+    two2one_ratio = np.round(np.divide(probabilities[1], probabilities[0]), 3)
+    top_one2two = (sorted(zip(features, one2two_ratio), key = itemgetter(1)))[:-(n+1):-1]
+    top_two2one = (sorted(zip(features, two2one_ratio), key = itemgetter(1)))[:-(n+1):-1]
+    label_one2two = classes[0] + ':' + classes[1] 
+    label_two2one = classes[1] + ':' + classes[0]
+    ratio_dict = {label_one2two: top_one2two, label_two2one: top_two2one}
+    print("\nBelow printout gives the most informative words.")
+    print("Example -> inc:dec: ('gain', 3.0) indicates 'gain'"\
+          + "is 3.0x more likely to appear in an inc tweet vs dec tweet.\n")
+    print("{:<35s} {:<35s}".format(label_one2two, label_two2one))
+    for one, two in zip(top_one2two, top_two2one):
+        print("{:<35s} {:<35s}".format(str(one), str(two)))
+    return ratio_dict
+
+def predict(clf, count_vect, tfTransformer,\
+            txtSearch, geoLocation, distance, numTestMaxTweets,\
+                topTestTweets, printAll):
+    predictTweets = get_tweets(txtSearch, geoLocation = geoLocation, \
+                               distance = distance, topTweets = topTestTweets,\
+                                   numMaxTweets = numTestMaxTweets)
+    tweetText = list(predictTweets['Text'])
+    tf_text = transform_text(tweetText, count_vect, tfTransformer)
+    predictions = clf.predict(tf_text)
+    if printAll:
+        for idx, prediction in enumerate(predictions):
+            print("\nTweet:")
+            print(tweetText[idx])
+            print("Prediction: " + prediction)
+    numInc = list(predictions).count('increase')
+    numDec = list(predictions).count('decrease')
+    print("\nRatio of predicted tweets (inc/dec): " + str(numInc) + '/' + str(numDec))
+    if (numInc/(numInc+numDec)) > 0.75:
+        print("Cases predicted to increase...")
+    elif (numDec/(numInc+numDec)) > 0.75:
+        print("Cases predicted to decrease")
+    else:
+        print("Too wishy washy... Evaluate more indicators")
+
 #%%
     
 if __name__ == "__main__":
@@ -154,7 +222,7 @@ if __name__ == "__main__":
         
     #%% Print statistics
     
-    plot_case_data(caseData)
+    plot_case_data(caseData, showPlots = True)
     
     #%% Compute weighted count
     
@@ -163,21 +231,60 @@ if __name__ == "__main__":
     deathWeight = 100
     totalImpact = compute_total_impact(caseData, caseWeight, hospWeight, deathWeight)
     
+    figNum = plot_case_data(caseData, showPlots = False)
+    plot_count_and_delta(pd.to_datetime(caseData['Date']),\
+                         totalImpact, 'Total Impact', figNum = figNum)
+    
     #%% Correlate tweets
     
     tweetResults = correlate_tweets(tweetsDF, caseData, totalImpact)
+    
+    #%% Plot tweets by day
+    
+    uniqueDates, tweetsByDay = count_tweets_by_day(tweetsDF, tweetResults)
+    figNum = plot_case_data(caseData, showPlots = False)
+    plot_count_and_delta(pd.to_datetime(caseData['Date']),\
+                         totalImpact, 'Total Impact', doShow = False, figNum = figNum)
+    plot_count_and_delta(pd.to_datetime(uniqueDates),\
+                         tweetsByDay, 'Tweets', doShow = True, figNum = figNum)
+        
+    #%% Create model
+    
+    trainSize = 0.8
+    stopwordsList = stopwords.words('english')
+    useIDF = True
+    totalTweets = list(tweetsDF['Text'])
+    clf, count_vect, tfTransformer\
+        = create_classifier(totalTweets, tweetResults,\
+                            trainSize, stopwordsList, useIDF)
+    
+    #%% Analyze model
+    
+    numFeatures = 10
+    ratio_dict = show_most_informative(clf, count_vect, n = numFeatures)
+    
+    #%% Predict from new tweets
+    geoLocation = "40.73, -73.94"
+    distance = "20mi"
+    txtSearch = "coronavirus covid"
+    numTestMaxTweets = 10
+    topTestTweets = True
+    printAll = False
+    predict(clf, count_vect, tfTransformer,\
+            txtSearch, geoLocation, distance, numTestMaxTweets,\
+                topTestTweets, printAll)
             
     #%% Gather tweets
     
-    geoLocation = "40.73, -73.94"
-    distance = "20mi"
-    sinceDate = "2020-02-29"
-    untilDate = "2020-05-11"
-    querySearch = "coronavirus covid"
-    maxTweets = 0
-    topTweets = False
+    # geoLocation = "40.73, -73.94"
+    # distance = "20mi"
+    # sinceDate = "2020-02-29"
+    # untilDate = "2020-05-11"
+    # querySearch = "coronavirus covid"
+    # maxTweets = 0
+    # topTweets = False
     
-    tweetsDF = get_tweets(querySearch, startDate = sinceDate, stopDate = untilDate,\
-                          geoLocation = geoLocation, distance = distance,\
-                              topTweets = topTweets, numMaxTweets = maxTweets)
-    tweetsDF.to_csv('./CSV_Files/NYC_Tweets.csv', index = False)
+    # tweetsDF = get_tweets(querySearch, startDate = sinceDate, stopDate = untilDate,\
+    #                       geoLocation = geoLocation, distance = distance,\
+    #                           topTweets = topTweets, numMaxTweets = maxTweets)
+    # tweetsDF.to_csv('./CSV_Files/NYC_Tweets.csv', index = False)
