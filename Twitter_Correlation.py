@@ -10,7 +10,6 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-import datetime
 from nltk.corpus import stopwords
 from sklearn.feature_extraction.text import CouplntVectorizer
 from sklearn.feature_extraction.text import TfidfTransformer
