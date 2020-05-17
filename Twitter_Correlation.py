@@ -15,6 +15,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.feature_extraction.text import TfidfTransformer
 from sklearn.naive_bayes import MultinomialNB
+from sklearn.metrics import classification_report
+from sklearn.metrics import plot_confusion_matrix
 from operator import itemgetter
 import warnings
 
@@ -160,7 +162,18 @@ def create_classifier(totalTweets, totalResults, trainSize, stopwordsList, useID
     train_tf = tfTransformer.fit_transform(train_counts)
     clf = MultinomialNB().fit(train_tf, resultsTrain)
     test_tf = transform_text(tweetTxtTest, count_vect, tfTransformer)
-    print("Accuracy: %0.2f" % (clf.score(test_tf, resultsTest)*100))
+    
+    predictedResults = clf.predict(test_tf)
+    classNames = clf.classes_
+    classifier_report = classification_report(resultsTest, predictedResults, labels = classNames)
+    print("\nModel results: ")
+    print(classifier_report)
+    disp = plot_confusion_matrix(clf, test_tf, resultsTest,
+                             display_labels = classNames,
+                             cmap=plt.cm.Blues)
+    title = 'Confusion Matrix'
+    disp.ax_.set_title(title)
+    plt.show()
     return clf, count_vect, tfTransformer
 
 def show_most_informative(clf, count_vect, n = 10):
