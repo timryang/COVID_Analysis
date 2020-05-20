@@ -18,6 +18,7 @@ from sklearn.naive_bayes import MultinomialNB
 from sklearn.metrics import classification_report
 from sklearn.metrics import plot_confusion_matrix
 from operator import itemgetter
+import random
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -26,6 +27,11 @@ warnings.filterwarnings("ignore")
 
 def find_idx(inputList, condition):
     return [idx for idx, val in enumerate(inputList) if val == condition]
+
+def del_idx(inputList, idxs):
+    for idx in sorted(idxs, reverse=True):
+        del inputList[idx]
+    return inputList
 
 def plot_count_and_delta(dates, data, label, doShow = True, figNum = False):
     dataDelta = np.diff(data)
@@ -118,16 +124,22 @@ def compute_total_impact(caseData, caseWeight, hospWeight, deathWeight):
     #     + (deathWeight*deathCounts)
     return totalImpact
 
-def correlate_tweets(tweetsDF, caseData, totalImpact):
+def correlate_tweets(tweetsDF, caseData, totalImpact, deltaInterval):
     tweetDates = [str(dt.date()) for dt in pd.to_datetime(tweetsDF['Date'])]
     caseDates = [str(dt.date()) for dt in pd.to_datetime(caseData['Date'])]
-    deltaCounts = np.diff(totalImpact)
+    cumSum = np.cumsum(totalImpact)
+    deltaCumsum = [cumSum[i+deltaInterval]-val for i, val in enumerate(cumSum[:-deltaInterval])]
+    deltaCounts = np.diff(deltaCumsum)
+    caseDates = caseDates[:-(deltaInterval+1)]
     numIncreaseDays = len(np.where(deltaCounts > 0)[0])
     numDecreaseDays = len(np.where(deltaCounts < 0)[0])
     dayIncreasePer = numIncreaseDays/(numDecreaseDays + numIncreaseDays)
     changeResult = np.where(deltaCounts > 0, 'increase', 'decrease')
+    validIdx = [idx for idx, val in enumerate(tweetDates) if val in caseDates]
+    tweetsDF_short = tweetsDF.iloc[validIdx]
+    tweetDates_short = [str(dt.date()) for dt in pd.to_datetime(tweetsDF_short['Date'])]
     tweetResults = []
-    for tweetDate in tweetDates:
+    for tweetDate in tweetDates_short:
         result = changeResult[find_idx(caseDates, tweetDate)]
         tweetResults.append(result[0])
     numIncreaseTweets = tweetResults.count('increase')
@@ -139,7 +151,7 @@ def correlate_tweets(tweetsDF, caseData, totalImpact):
     print("\nTotal increase tweets: " + str(numIncreaseTweets))
     print("Total decrease tweets: " + str(numDecreaseTweets))
     print("Tweet increase percentage: %0.2f" % (tweetIncreasePer*100))
-    return tweetResults
+    return tweetResults, tweetsDF_short
 
 def count_tweets_by_day(tweetsDF, tweetResults):
     tweetDates = [str(dt.date()) for dt in pd.to_datetime(tweetsDF['Date'])]
@@ -153,7 +165,26 @@ def transform_text(text, count_vect, tfTransformer):
     tf_text = tfTransformer.transform(count_text)
     return tf_text
 
-def create_classifier(totalTweets, totalResults, trainSize, stopwordsList, useIDF):
+def downsample(xValues, yValues):
+    totalList = list(zip(xValues, yValues))
+    random.shuffle(totalList)
+    xRand, yRand = zip(*totalList)
+    xRand = list(xRand)
+    yRand = list(yRand)
+    uniqueY = list(set(yRand))
+    numYs = [yRand.count(y) for y in uniqueY]
+    minNum = min(numYs)
+    for idx, y in enumerate(uniqueY):
+        num_del = numYs[idx]-minNum
+        y_idxs = find_idx(yRand, y)
+        removeIdxs = y_idxs[:num_del+1]
+        yRand = del_idx(yRand, removeIdxs)
+        xRand = del_idx(xRand, removeIdxs)
+    return xRand, yRand
+
+def create_classifier(totalTweets, totalResults, trainSize, stopwordsList, useIDF, do_downsample = False):
+    if do_downsample:
+        totalTweets, totalResults = downsample(totalTweets, totalResults)
     tweetTxtTrain, tweetTxtTest, resultsTrain, resultsTest = train_test_split(
         totalTweets, totalResults, train_size = trainSize, random_state = 42)
     count_vect = CountVectorizer(stop_words = stopwordsList)
@@ -223,6 +254,21 @@ def predict(clf, count_vect, tfTransformer,\
     
 if __name__ == "__main__":
     
+    #%% Gather tweets
+    
+    # geoLocation = "40.73, -73.94"
+    # distance = "20mi"
+    # sinceDate = "2020-02-29"
+    # untilDate = "2020-05-11"
+    # querySearch = "coronavirus covid"
+    # maxTweets = 0
+    # topTweets = False
+    
+    # tweetsDF = get_tweets(querySearch, startDate = sinceDate, stopDate = untilDate,\
+    #                       geoLocation = geoLocation, distance = distance,\
+    #                           topTweets = topTweets, numMaxTweets = maxTweets)
+    # tweetsDF.to_csv('./CSV_Files/NYC_Tweets.csv', index = False)
+    
     #%% Load CSV data and update field name
     
     caseData = pd.read_csv('./CSV_Files/NYC_May11.csv')
@@ -250,11 +296,12 @@ if __name__ == "__main__":
     
     #%% Correlate tweets
     
-    tweetResults = correlate_tweets(tweetsDF, caseData, totalImpact)
+    deltaInterval = 3 # days
+    tweetResults, tweetsDF_short = correlate_tweets(tweetsDF, caseData, totalImpact, deltaInterval)
     
     #%% Plot tweets by day
     
-    uniqueDates, tweetsByDay = count_tweets_by_day(tweetsDF, tweetResults)
+    uniqueDates, tweetsByDay = count_tweets_by_day(tweetsDF_short, tweetResults)
     figNum = plot_case_data(caseData, showPlots = False)
     plot_count_and_delta(pd.to_datetime(caseData['Date']),\
                          totalImpact, 'Total Impact', doShow = False, figNum = figNum)
@@ -266,10 +313,11 @@ if __name__ == "__main__":
     trainSize = 0.8
     stopwordsList = stopwords.words('english')
     useIDF = True
-    totalTweets = list(tweetsDF['Text'])
+    do_downsample = True
+    totalTweets = list(tweetsDF_short['Text'])
     clf, count_vect, tfTransformer\
         = create_classifier(totalTweets, tweetResults,\
-                            trainSize, stopwordsList, useIDF)
+                            trainSize, stopwordsList, useIDF, do_downsample = do_downsample)
     
     #%% Analyze model
     
@@ -286,18 +334,3 @@ if __name__ == "__main__":
     predict(clf, count_vect, tfTransformer,\
             txtSearch, geoLocation, distance, numTestMaxTweets,\
                 topTestTweets, printAll)
-            
-    #%% Gather tweets
-    
-    # geoLocation = "40.73, -73.94"
-    # distance = "20mi"
-    # sinceDate = "2020-02-29"
-    # untilDate = "2020-05-11"
-    # querySearch = "coronavirus covid"
-    # maxTweets = 0
-    # topTweets = False
-    
-    # tweetsDF = get_tweets(querySearch, startDate = sinceDate, stopDate = untilDate,\
-    #                       geoLocation = geoLocation, distance = distance,\
-    #                           topTweets = topTweets, numMaxTweets = maxTweets)
-    # tweetsDF.to_csv('./CSV_Files/NYC_Tweets.csv', index = False)
