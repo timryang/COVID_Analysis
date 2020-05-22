@@ -6,9 +6,6 @@ Created on Fri May 22 12:27:29 2020
 """
 
 from commonFunctions import *
-import pandas as pd
-from nltk.corpus import stopwords
-import numpy as np
 
 #%% Functions
 

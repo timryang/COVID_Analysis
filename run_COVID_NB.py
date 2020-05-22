@@ -4,8 +4,8 @@ Created on Fri May 22 15:50:28 2020
 
 @author: timot
 """
-from nltk.corpus import stopwords
 from COVID_NB_Analyzer import COVID_NB_Analyzer
+from nltk.corpus import stopwords
 
 #%% Inputs:
 
