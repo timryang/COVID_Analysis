@@ -33,7 +33,7 @@ def del_idx(inputList, idxs):
         del inputList[idx]
     return inputList
 
-def plot_count_and_delta(dates, data, label, doShow = True, figNum = False):
+def plot_count_and_delta(dates, data, label, doDelta = False, doShow = True, figNum = False):
     dataDelta = np.diff(data)
     formatter = mdates.DateFormatter("%m-%d")
     locator = mdates.DayLocator(bymonthday = [1, 15])
@@ -44,32 +44,34 @@ def plot_count_and_delta(dates, data, label, doShow = True, figNum = False):
         ax = plt.gca()
         ax.xaxis.set_major_formatter(formatter)
         ax.xaxis.set_major_locator(locator)
-    plt.subplot(121)
+    if doDelta:
+        plt.subplot(121)
     plt.plot_date(dates, data, '-', label = label)
     plt.title('New Occurrences')
     plt.xlabel('Date')
     plt.ylabel('Counts')
     plt.xticks(rotation = 70)
     plt.legend()
-    plt.subplot(122)
-    plt.plot_date(dates[:-1], dataDelta, '-', label = label)
-    plt.title('Delta Occurrences')
-    plt.xlabel('Date')
-    plt.ylabel('Counts')
-    plt.xticks(rotation = 70)
-    plt.legend()
+    if doDelta:
+        plt.subplot(122)
+        plt.plot_date(dates[:-1], dataDelta, '-', label = label)
+        plt.title('Delta Occurrences')
+        plt.xlabel('Date')
+        plt.ylabel('Counts')
+        plt.xticks(rotation = 70)
+        plt.legend()
     if doShow:
         plt.show()
     return plt.gcf().number
 
-def plot_case_data(caseData, showPlots = True):
+def plot_case_data(caseData, doDelta = True, showPlots = True):
     dates = pd.to_datetime(caseData['Date'])
     cases = caseData['Cases'].values
     hosp = caseData['Hospitalizations'].values
     deaths = caseData['Deaths'].values
-    figNum = plot_count_and_delta(dates, cases, 'Cases', doShow = False)
-    plot_count_and_delta(dates, hosp, 'Hosps', doShow = False, figNum = figNum)
-    plot_count_and_delta(dates, deaths, 'Deaths', doShow = showPlots, figNum = figNum)
+    figNum = plot_count_and_delta(dates, cases, 'Cases', doDelta = doDelta, doShow = False)
+    plot_count_and_delta(dates, hosp, 'Hosps', doDelta = doDelta, doShow = False, figNum = figNum)
+    plot_count_and_delta(dates, deaths, 'Deaths', doDelta = doDelta, doShow = showPlots, figNum = figNum)
     return figNum
 
 def rename_date_field(df):
@@ -120,8 +122,6 @@ def compute_total_impact(caseData, caseWeight, hospWeight, deathWeight):
     deathCounts = caseData['Deaths'].values
     totalImpact = ((caseWeight*caseCounts) + (hospWeight*hospCounts)\
         + (deathWeight*deathCounts)) / (caseWeight + hospWeight + deathWeight)
-    # totalImpact = (caseWeight*caseCounts) + (hospWeight*hospCounts)\
-    #     + (deathWeight*deathCounts)
     return totalImpact
 
 def correlate_tweets(tweetsDF, caseData, totalImpact, deltaInterval):
@@ -153,7 +153,7 @@ def correlate_tweets(tweetsDF, caseData, totalImpact, deltaInterval):
     print("Tweet increase percentage: %0.2f" % (tweetIncreasePer*100))
     return tweetResults, tweetsDF_short
 
-def count_tweets_by_day(tweetsDF, tweetResults):
+def count_tweets_by_day(tweetsDF):
     tweetDates = [str(dt.date()) for dt in pd.to_datetime(tweetsDF['Date'])]
     uniqueDates = list(set(tweetDates))
     uniqueDates.sort()
@@ -281,7 +281,7 @@ if __name__ == "__main__":
         
     #%% Print statistics
     
-    plot_case_data(caseData, showPlots = True)
+    figNum = plot_case_data(caseData, doDelta = True, showPlots = True)
     
     #%% Compute weighted count
     
@@ -290,9 +290,9 @@ if __name__ == "__main__":
     deathWeight = 100
     totalImpact = compute_total_impact(caseData, caseWeight, hospWeight, deathWeight)
     
-    figNum = plot_case_data(caseData, showPlots = False)
+    figNum = plot_case_data(caseData, doDelta = True, showPlots = False)
     plot_count_and_delta(pd.to_datetime(caseData['Date']),\
-                         totalImpact, 'Total Impact', figNum = figNum)
+                         totalImpact, 'Total Impact', doDelta = True, figNum = figNum)
     
     #%% Correlate tweets
     
@@ -302,11 +302,20 @@ if __name__ == "__main__":
     #%% Plot tweets by day
     
     uniqueDates, tweetsByDay = count_tweets_by_day(tweetsDF_short, tweetResults)
-    figNum = plot_case_data(caseData, showPlots = False)
-    plot_count_and_delta(pd.to_datetime(caseData['Date']),\
-                         totalImpact, 'Total Impact', doShow = False, figNum = figNum)
-    plot_count_and_delta(pd.to_datetime(uniqueDates),\
-                         tweetsByDay, 'Tweets', doShow = True, figNum = figNum)
+    
+    #%% Plot using the delta invterval
+    
+    caseDates = [str(dt.date()) for dt in pd.to_datetime(caseData['Date'])]
+    cumSum = np.cumsum(totalImpact)
+    deltaCumsum = [cumSum[i+deltaInterval]-val for i, val in enumerate(cumSum[:-deltaInterval])]
+    caseDatesInterval = caseDates[:-deltaInterval]
+    figNum = plot_count_and_delta(pd.to_datetime(caseDates), totalImpact,\
+                         'New Count', doDelta = False, doShow = False)
+    plot_count_and_delta(pd.to_datetime(caseDates), cumSum,\
+                         'Cumulative Counts', doDelta = False, doShow = False, figNum = figNum)
+    plot_count_and_delta(pd.to_datetime(caseDatesInterval), deltaCumsum,\
+                         'By Interval', doDelta = True, doShow = False,)
+    
         
     #%% Create model
     
